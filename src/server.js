@@ -9,18 +9,17 @@ const server = http.createServer(app);
 const { Server } = require('socket.io');
 const io = new Server(server);
 const { config } = require('./db/config.js');
-const { configSQLite } = require('./db/configSQLite');
-const knex = require('knex')(config);
+// const { configSQLite } = require('./db/configSQLite');
 // const knex = require('knex')(configSQLite);
+const knex = require('knex')(config);
+const { fakerArray } = require('./faker/fakeData.js');
+const { MensajeModel } = require('./db/configMongo.js');
+const { normalize, schema } = require('normalizr');
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static('public'));
-/**
- * bueno como no explicaron como unificar todo yo intente con lo que se venia haciendo si  bien no funciona del todo bien es porque lo solucione como pude
- * estaria bueno que puedan mostrar como ensamblar todo en el modulo principal o en el server, lo que hice fue utilizar ECS5  y conectar la base de datos, lo q no pude desifrar bien
- * es porque no me incrusta nueva info que el usuario carga desde los inputs, en la base de datos, si lo hice tal cual mostraron...
- */
+
 /* -------------------------------------------------------------------------- */
 /*                                    data                                    */
 /* -------------------------------------------------------------------------- */
@@ -35,7 +34,7 @@ const dataMsg = [
     mensaje: 'Hola bienvenidos al chat!',
   },
 ];
-module.exports={dataMsg}//lo exporto al modulo de insert_data para cargarlo a SQL
+module.exports = { dataMsg }; //lo exporto al modulo de insert_data para cargarlo a SQL
 /* -------------------------------------------------------------------------- */
 /*                                  SOCKET.IO                                 */
 /* -------------------------------------------------------------------------- */
@@ -43,68 +42,118 @@ io.on('connection', (socket) => {
   console.log('Nuevo usuario conectado! 🙂');
   socket.on('disconnect', () => console.log('Usuario desconectado 👋'));
   /* -------------------------- funciones del socket -------------------------- */
-  const cargarProds = async () => {
+  const cargarProds = async (dataBase, socket) => {
     /* ------------------------- leemos productos de la base de datos ------------------------ */
     try {
-      const rows = await knex.from('productos').select('*');
+      const rows = await knex.from(dataBase).select('*');
+
       for (row of rows)
-      console.log(`${row['id']}, ${row['producto']}, ${row['precio']}`);
-      io.sockets.emit('productos', rows); //envio desde la base de datos
+        console.log(`${row['id']}, ${row['producto']}, ${row['precio']}`);
+      io.sockets.emit(socket, rows); //envio desde la base de datos
     } catch (err) {
       console.log(err);
     } finally {
       knex.destroy();
     }
   };
-  cargarProds();
+  cargarProds('productos', 'productos');
+  // cargarProds('productos','productos-test')
+  const cargarTestProd = () => {
+    io.sockets.emit('productos-test', fakerArray);
+  };
+  cargarTestProd();
+
   /* ----------------- leemos mensajes de la base de datos ---------------- */
-  const cargarMsjs = async () => {
+  // const cargarMsjs = async () => {
+  //   try {
+  //     const rows = await knex.from('mensajes').select('*');
+  //     console.log(rows);
+  //     io.sockets.emit('mensajes', rows);
+  //   } catch (err) {
+  //     console.log(err);
+  //   } finally {
+  //     knex.destroy();
+  //   }
+  // };
+  // cargarMsjs();
+  const normalizar = (msj) => {
+    const authSchema = new schema.Entity('author');
+    const textSchema = new schema.Entity('text');
+    const mensajeSchema = new schema.Entity('text', {
+      author: authSchema,
+      text: textSchema,
+    });
+
+    const dataNormalizada = normalize(msj, mensajeSchema);
+    console.log(dataNormalizada, 'data normalizada--------------');
+    return dataNormalizada;
+  };
+
+  const cargarMsj = async (mensaje) => {
+    // let msj = {
+    //   author: {
+    //     id: 'email de prueba',
+    //     nombre: 'nombre test',
+    //     apellido: 'apellido test',
+    //     edad: 2,
+    //     alias: 'alias test',
+    //     avatar: 'url test',
+    //   },
+    //   text: 'algun texto de prueba',
+    // };
+
+    const msjNormalizado = normalizar(mensaje);
     try {
-      const rows = await knex.from('mensajes').select('*');
-      console.log(rows)
-      io.sockets.emit('mensajes', rows);
-    } catch (err) {
-      console.log(err);
-    } finally {
-      knex.destroy();
+      const msj = await MensajeModel.create(msjNormalizado);
+      return msj;
+    } catch (error) {
+      console.log(error);
     }
   };
-  cargarMsjs();
-  // io.sockets.emit('mensajes', dataMsg); //envio el array de msj
+
+  const getMensajes = async () => {
+    try {
+      cargarMsj();
+      const mensajes = await MensajeModel.find();
+      console.log(mensajes);
+      normalizar(mensajes)
+      io.sockets.emit('mensajes', mensajes);
+      return mensajes;
+    } catch (error) {
+      console.log(error);
+    }
+  };
+  getMensajes();
   /* -------------------------- insertamos nuevo prod ------------------------- */
   socket.on('producto', (prod) => {
     (async () => {
       try {
         console.log(prod);
-        await knex('productos').insert(prod);
-        await cargarProds();
-        // io.sockets.emit('productos', rows); //envio desde la base de datos
+        await knex.from('productos').insert(prod);
+        await getProducts();
       } catch (err) {
         console.log(err);
       } finally {
         knex.destroy();
       }
     })();
-    // data.push(prod);
-    // io.sockets.emit('productos', data); //envio el array de productos modificado
   });
 
   socket.on('mensaje', (msg) => {
-    (async ()=>{
+    (async () => {
       console.log(msg);
       try {
-        await knex('mensajes').insert(msg)
+        await knex('mensajes').insert(msg);
         cargarMsjs();
       } catch (error) {
         console.log(error);
-      }finally {
+      } finally {
         knex.destroy();
       }
-    })()
-    // dataMsg.push(msg);
-    // io.sockets.emit('mensajes', dataMsg); //envio el mensaje
+    })();
   });
 });
+
 /* -------------------------------------------------------------------------- */
 /*                                 HBS config                                 */
 /* -------------------------------------------------------------------------- */
@@ -126,7 +175,9 @@ app.engine(
 app.get('/', (req, res) => {
   res.render('main', { layout: 'index' });
 });
-
+app.get('/api/productos-test', (req, res) => {
+  res.render('main-test', { layout: 'index-test' });
+});
 /* ------------------------------------ ----------------------------------- */
 server.listen(PORT, () => {
   console.log(`server is runing at http://localhost:${PORT}`);

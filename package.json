@@ -8,11 +8,14 @@
     "express": "^4.17.3",
     "express-handlebars": "^6.0.3",
     "knex": "^1.0.5",
+    "mongoose": "^6.3.1",
     "mysql2": "^2.3.3",
+    "normalizr": "^3.6.2",
     "socket.io": "^4.4.1",
     "sqlite3": "^5.0.2"
   },
   "devDependencies": {
+    "@faker-js/faker": "^6.2.0",
     "eslint": "^8.11.0"
   },
   "scripts": {
